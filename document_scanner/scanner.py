@@ -1,14 +1,17 @@
+import asyncio
+import json
 import os
+
 from PIL import Image
-from .pdf_utils import extract_text_from_pdf, convert_pdf_to_images
-from .openai_utils import process_text_with_openai, process_image_with_gpt4
+
+from .openai_utils import (process_image_with_gpt4, process_images_with_gpt4,
+                           process_text_with_openai)
+from .pdf_utils import convert_pdf_to_images, extract_text_from_pdf
+
 
 class DocumentScanner:
-    def __init__(self, extraction_config):
-        """
-        Initialize with a configuration dict that specifies what fields to extract.
-        """
-        self.extraction_config = extraction_config
+    def __init__(self, extraction_schema_name):
+        self.extraction_schema_name = extraction_schema_name
 
     def scan_document(self, file_path):
         ext = os.path.splitext(file_path)[1].lower()
@@ -16,17 +19,17 @@ class DocumentScanner:
             text = extract_text_from_pdf(file_path)
             if text:
                 print("Text layer found in PDF. Processing text...")
-                return process_text_with_openai(text, self.extraction_config)
+                result = process_text_with_openai(text, self.extraction_schema_name)
+                return (
+                    json.dumps(json.loads(result), indent=2)
+                    if result is not None
+                    else None
+                )
             else:
                 print("No text found; assuming scanned PDF. Converting to images...")
                 images = convert_pdf_to_images(file_path)
-                results = []
-                for idx, img in enumerate(images):
-                    print(f"Processing page {idx + 1} as image...")
-                    res = process_image_with_gpt4(img, self.extraction_config)
-                    if res:
-                        results.append(res)
-                return "\n".join(results)
+                print(f"Converted PDF to {len(images)} images.")
+                return asyncio.run(self.async_process_images(images))
         elif ext in [".jpg", ".jpeg", ".png", ".bmp"]:
             try:
                 image = Image.open(file_path)
@@ -34,7 +37,19 @@ class DocumentScanner:
                 print(f"Error opening image: {e}")
                 return None
             print("Processing image file...")
-            return process_image_with_gpt4(image, self.extraction_config)
+            result = process_image_with_gpt4(image, self.extraction_schema_name)
+            return (
+                json.dumps(json.loads(result), indent=2) if result is not None else None
+            )
         else:
             print("Unsupported file format.")
             return None
+
+    async def async_process_images(self, images):
+        print("Starting async image processing...")
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, process_images_with_gpt4, images, self.extraction_schema_name
+        )
+        print("Finished async image processing.")
+        return json.dumps(json.loads(result), indent=2) if result is not None else None

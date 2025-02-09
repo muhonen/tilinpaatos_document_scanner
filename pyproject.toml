@@ -7,7 +7,6 @@ name = "document_scanner"
 version = "0.1.0"
 description = "A document scanning system that extracts structured data from PDFs or images using OpenAI's API."
 readme = "README.md"
-license = { file = "LICENSE" }
 authors = [
     { name = "Your Name", email = "your.email@example.com" }
 ]
@@ -15,6 +14,18 @@ dependencies = [
     "openai",
     "PyPDF2",
     "pdf2image",
-    "Pillow"
+    "Pillow",
+    "python-dotenv"
 ]
 requires-python = ">=3.8"
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit",
+    "black",
+    "flake8"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["document_scanner"]

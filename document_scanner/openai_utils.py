@@ -1,63 +1,126 @@
-from dotenv import load_dotenv
-load_dotenv()  # This will load variables from the .env file into os.environ
-
-import os
-import json
 import base64
+import json
+import os
 from io import BytesIO
-import openai
+
+from dotenv import load_dotenv
+from openai import OpenAI
 from PIL import Image
 
-# Get OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+from .extraction_structures import extraction_schema
+from .prompts import get_prompt
 
-def process_text_with_openai(text, extraction_config):
+load_dotenv()
+client = OpenAI()
+client.api_key = os.getenv("OPENAI_API_KEY")
+
+
+def prepare_image(image, target_width=1200, quality=300, grayscale=True):
     """
-    Sends extracted text to the OpenAI API to extract structured data.
-    The extraction_config (dict) specifies what fields to extract.
+    Resize the image if its width exceeds target_width, convert to grayscale if requested,
+    and return the processed image.
     """
-    prompt = (
-        f"Extract the following fields as JSON: {json.dumps(extraction_config)}\n\n"
-        f"Document text:\n{text}"
+    width, height = image.size
+    if width > target_width:
+        new_height = int((target_width / width) * height)
+        image = image.resize(
+            (target_width, new_height), resample=Image.Resampling.LANCZOS
+        )
+    if grayscale:
+        image = image.convert("L")
+    return image
+
+
+def process_text_with_openai(text, extraction_schema_name):
+    """
+    Process text using GPT-4o-mini and return the API response.
+    """
+    prompt = get_prompt()
+    json_schema = extraction_schema(extraction_schema_name)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini-2024-07-18",
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text},
+        ],
+        temperature=0,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "yrityksen_taloustiedot", "schema": json_schema},
+        },
+        max_tokens=1500,
     )
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",  # or another appropriate model
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=1000
-        )
-        return response['choices'][0]['message']['content']
-    except Exception as e:
-        print(f"Error processing text with OpenAI: {e}")
-        return None
+    return response.choices[0].message.content
 
-def process_image_with_gpt4(image, extraction_config):
+
+def process_image_with_gpt4(image, extraction_schema_name):
     """
-    Sends an image to the OpenAI API for OCR and structured extraction.
-    Returns the API's response.
-    
-    Note: The image processing API and model identifier might change; adjust as needed.
+    Process a single image using GPT-4o-mini.
+    The image is resized, converted to grayscale, compressed, and encoded to base64.
     """
-    # Convert image to JPEG base64 string
+    prepared_image = prepare_image(image, target_width=1200, quality=30, grayscale=True)
     buffered = BytesIO()
-    image.save(buffered, format="JPEG")
-    img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
-
-    prompt = f"Extract the following fields as JSON: {json.dumps(extraction_config)}"
-    
-    # Construct the message for a multimodal (text + image) API call
-    message = [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}", "detail": "high"}}
+    prepared_image.save(buffered, format="JPEG", quality=300)
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    prompt = get_prompt()
+    messages = [
+        {"role": "system", "content": prompt},
+        {
+            "role": "user",
+            "content": f"data:image/jpeg;base64,{img_str}",
+            "image_url": {"detail": "low"},
+        },
     ]
-    
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-2024-11-20",  # Example model name for image-enabled GPT-4o
-            messages=[{"role": "user", "content": message}],
-            max_tokens=1000
+    json_schema = extraction_schema(extraction_schema_name)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini-2024-07-18",
+        messages=messages,
+        temperature=0,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "yrityksen_taloustiedot", "schema": json_schema},
+        },
+        max_tokens=1500,
+    )
+    return response.choices[0].message.content
+
+
+def process_images_with_gpt4(images, extraction_schema_name):
+    """
+    Process multiple images in a single API call.
+    The images are processed as a single user message whose content is an array of a text prompt
+    followed by multiple image objects.
+    """
+    prompt = get_prompt()
+    messages = [{"role": "system", "content": prompt}]
+    # Build a single user message with an array of objects
+    user_content = [{"type": "text", "text": prompt}]
+    for image in images:
+        prepared_image = prepare_image(
+            image, target_width=1200, quality=300, grayscale=True
         )
-        return response['choices'][0]['message']['content']
-    except Exception as e:
-        print(f"Error processing image with OpenAI: {e}")
-        return None
+        buffered = BytesIO()
+        prepared_image.save(buffered, format="JPEG", quality=300)
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{img_str}",
+                    "detail": "low",
+                },
+            }
+        )
+    messages.append({"role": "user", "content": user_content})
+    json_schema = extraction_schema(extraction_schema_name)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini-2024-07-18",
+        messages=messages,
+        temperature=0,
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "yrityksen_taloustiedot", "schema": json_schema},
+        },
+        max_tokens=2000,
+    )
+    return response.choices[0].message.content
