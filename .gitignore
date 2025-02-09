@@ -11,3 +11,6 @@ venv/
 build/
 dist/
 *.egg-info/
+
+# Other
+imgs/

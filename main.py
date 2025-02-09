@@ -1,15 +1,6 @@
 import sys
-import json
-import os
-from document_scanner.scanner import DocumentScanner
 
-def load_extraction_config(config_path):
-    try:
-        with open(config_path, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading configuration: {e}")
-        return {}
+from document_scanner.scanner import DocumentScanner
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -17,12 +8,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     file_path = sys.argv[1]
-    config_path = os.path.join("config", "extraction_config.json")
-    extraction_config = load_extraction_config(config_path)
-    
-    scanner = DocumentScanner(extraction_config)
+    scanner = DocumentScanner(extraction_schema_name="yrityksen_taloustiedot")
     result = scanner.scan_document(file_path)
-    
+
     if result:
         print("Extraction Result:")
         print(result)
